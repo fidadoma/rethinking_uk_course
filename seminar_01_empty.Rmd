@@ -1,0 +1,182 @@
+---
+title: "Seminář - týden 1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+```
+
+
+## tidyverse practice
+
+Let's revisit `ukol_00_empty.Rmd`.
+
+## Statistical Golems
+
+- Why a "golem"? What similarity do we find?
+
+- https://www.autodesk.com/research/publications/same-stats-different-graphs
+  - inspired by Anscome's Quartet (70')
+
+```{r}
+# datasaurus_dozen imported
+load(url("https://github.com/lockedata/datasauRus/blob/master/data/datasaurus_dozen.rda?raw=true"))
+
+datasaurus_dozen %>% print()
+datasaurus_dozen %>% count(dataset)
+
+datasaurus_dozen %>% 
+  ggplot(aes(x = x, y = y, colour = dataset)) + 
+  geom_point() + facet_wrap(~dataset)
+```
+
+### Task
+
+Check means and SD of x and y for each dataset. Check the correlations between x and y for each dataset.
+
+```{r}
+
+
+
+```
+
+Show distributions of x and for each dataset
+
+```{r}
+
+
+
+
+```
+
+## Small World, Large Worlds
+
+- small world - optimality
+- large world
+
+## Garden of Forking Data
+
+- https://archive.org/details/TheGardenOfForkingPathsJorgeLuisBorges1941/page/n7/mode/2up
+
+### Example
+
+- bag with 4 marbles (blue/white)
+- goal: based on few draws, what is in the bag
+- observation = BWB
+- conjectures (CZ: domněnka)
+- plausibility = normalized counting
+- probability = set of non-negative numbers, sums to 1
+
+```{r}
+conjectures <- c("WWWW", "BWWW", "BBWW", "BBBW", "BBBB")
+ways_to_produce <- function(conjs, observation) {
+  result <- stringr::str_count(conjs, observation)
+  names(result) <- conjs
+  result
+}
+
+# how it works: single draw, one blue
+ways_to_produce(conjectures, "B")
+```
+
+All the ways leading to BWB observation
+
+```{r}
+draw123 <- 
+  ways_to_produce(conjectures, "B") *
+  ways_to_produce(conjectures, "W") *
+  ways_to_produce(conjectures, "B")
+draw123
+# can you make it into a table with conjectures?
+```
+
+One additional marble, blue again
+
+```{r}
+draw1234 <- draw123 *
+  ways_to_produce(conjectures, "B")
+draw1234
+```
+
+Extra info from factory: blue rare but always present
+
+```{r}
+factory_prior <- c(0, 3, 2, 1, 0)
+draw1234 * factory_prior
+```
+
+
+### Terminology from textbook
+
+- A conjectured proportion of blue marbles, p, is usually called a **parameter** value. It’s just a way of indexing possible explanations of the data.
+- The relative number of ways that a value p can produce the data is usually called a **likelihood**. It is derived by enumerating all the possible data sequences that could have happened and then eliminating those sequences inconsistent with the data.
+- The prior plausibility of any specific p is usually called the **prior probability**.
+- The new, updated plausibility of any specific p is usually called the **posterior probability**.
+
+### Example 2
+
+- Same as Example 1 (4 draws), but different factory priors
+- The bag may come from Factory A or Factory B (50:50 chance)
+  - Factory A - same priors as in example (`c(0, 3, 2, 1, 0)`)
+  - Factory B - likely to produce pairs (`c(0, 1, 2, 1, 0)`)
+
+```{r}
+factory_prior_a <- c(0, 3, 2, 1, 0)
+factory_prior_b <- c(0, 1, 2, 1, 0)
+
+
+
+
+
+```
+
+What of Factory B produces also uniform bags? (`c(2, 1, 2, 1, 2)`)
+
+```{r}
+factory_prior_b2 <- c(2, 1, 2, 1, 2)
+
+
+
+```
+
+### Example 3
+
+Imagine new set of marbles:
+
+- four marbles again, three colours (red, blue, white)
+- you draw 3 times: RBW
+- one more draw: R
+
+Build your conjectures
+
+- [combination with repetition](https://en.wikipedia.org/wiki/Combination#Number_of_combinations_with_repetition)
+- you can count them with `choose(n + k - 1, k)`, *n* number of colours, *k* number of draws
+
+```{r}
+conjectures <- c(
+  
+  
+)
+choose(4 + 3 - 1, 4)
+```
+
+All the ways leading to RBW
+
+```{r}
+# d123 <- 
+
+d123
+```
+
+One more draw: R
+
+```{r}
+
+
+```
+
+
+
