@@ -1,0 +1,574 @@
+---
+title: "Seminář - týden 3"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(patchwork)
+library(brms)
+library(tidybayes) # new
+
+tmpdir <- here::here("tmp")
+if (!dir.exists(tmpdir)) dir.create(tmpdir)
+```
+
+## Examples from last week
+
+Thinking about pandas...
+
+```{r}
+# 2H1
+# first twins, next birth also twins?
+p_twins_A <- 0.1
+p_twins_B <- 0.2
+likelihood <- c(p_twins_A, p_twins_B)
+prior <- c(1, 1)
+posterior <- prior * likelihood
+posterior <- posterior / sum(posterior)
+sum(posterior * likelihood)
+# 2H2 
+# p(A)
+posterior[1]
+# 2H3
+# p(A) if next is singleton
+likelihood_singleton <- c(1 - p_twins_A, 1 - p_twins_B)
+posterior2 <- posterior * likelihood_singleton
+posterior2 <- posterior2 / sum(posterior2)
+posterior2[1]
+# 2H4
+# we have extra test
+likelihood_test <- c(0.8, 1 - 0.65)
+prior <- c(1, 1)
+posterior_vet <- prior * likelihood_test
+posterior_vet <- posterior_vet/sum(posterior_vet)
+posterior_vet[1]
+
+likelihood_twins <- c(0.10, 0.20)
+prior <- posterior_vet
+posterior <- prior * likelihood_twins
+posterior <- posterior/sum(posterior)
+posterior[1]
+
+```
+
+
+## Sampling the Imaginary
+
+Example from the textbook (Code 3.2)
+
+```{r}
+d <- tibble(
+  p_grid = seq(from = 0, to = 1, length.out = 1000),
+  prior = rep(1, 1000),
+  likelihood = dbinom(6, size = 9, prob = p_grid),
+  posterior = likelihood * prior
+)
+d$posterior <- d$posterior / sum(d$posterior)
+# let's check the result
+qplot(p_grid, posterior, data = d)
+```
+
+We sample from *p_grid* with weights based on *posterior*.
+
+```{r}
+set.seed(1001)
+samples <- sample(d$p_grid, prob = d$posterior, 
+                  size = 1e4, replace = TRUE)
+```
+
+Is sampling same as original distribution? Close enough.
+
+```{r}
+ggplot(NULL, aes(x=samples))+
+  geom_density(colour = "red") +
+  geom_line(aes(x = p_grid, y = posterior * length(p_grid)), 
+             data = d, 
+            linetype="dashed")
+```
+
+### Summarizing
+
+Intervals of defined boundaries.
+
+```{r}
+# posterior probability that the proportion of water is less than 0.5
+sum(d$posterior[d$p_grid < 0.5])  # via grid
+mean(samples < 0.5)               # via samples
+
+```
+
+Intervals of defined mass. 
+
+```{r}
+# percentile interval ("middle 80%")
+quantile(samples, p = c(0.10, 0.90))
+rethinking::PI(samples, prob = 0.80) # same
+# HPDI: highest posterior density interval
+# narrowest interval containing the specified probability mass
+rethinking::HPDI(samples, prob = 0.80)
+
+```
+
+```{r}
+# here very similar, but imagine 3 waters of 3 tosses
+# see Fig.3.3
+d <- 
+  d %>% 
+  mutate(
+    likelihood3of3 = dbinom(3, size = 3, prob = p_grid),
+    posterior3of3 = prior * likelihood3of3
+  ) %>% 
+  mutate(
+    posterior3of3 = posterior3of3 / sum(posterior3of3)
+  )
+set.seed(1002)
+samples3of3 <- sample(d$p_grid, prob = d$posterior3of3, 
+                      size = 1e4, replace = TRUE)
+# now different, 50% was used in book
+rethinking::PI(samples3of3, prob = 0.50) 
+rethinking::HPDI(samples3of3, prob = 0.50)
+```
+
+Point estimates
+
+```{r}
+mean(samples)
+median(samples)
+# MAP: maximum a posteriori estimate
+rethinking::chainmode(samples)
+```
+
+### Posterior predictions
+
+- via brms - https://bookdown.org/ajkurz/Statistical_Rethinking_recoded/sampling-the-imaginary.html#summary-lets-practice-in-brms
+- What is the difference between *posterior distribution* and *posterior predictive distribution*
+
+```{r  message=FALSE, warning=FALSE, results="hide"}
+# 6 of 9
+b3.1 <-
+  brm(data = list(w = 6), 
+      family = binomial(link = "identity"),
+      w | trials(9) ~ 1,
+      # this is a flat prior
+      prior(beta(1, 1), class = Intercept),
+      seed = 3,
+      control = list(adapt_delta = .999), 
+      #save_all_pars = T, sample_prior = T, 
+      file = here::here("tmp", "model_b31")
+      )
+```
+
+```{r}
+# posterior mean + quantile-based 95% interval
+posterior_summary(b3.1)["b_Intercept", ] %>% 
+  round(digits = 2)
+# don't worry about lp__
+# https://discourse.mc-stan.org/t/basic-question-what-is-lp-in-posterior-samples-of-a-brms-regression/17567/2
+```
+
+Making "samples"
+
+```{r}
+f <-
+  fitted(b3.1, summary = F, scale = "linear") %>% 
+  as_tibble(.name_repair = "unique") %>% 
+  set_names("p")
+# compare: fitted(b3.1, summary = F, scale = "linear") %>% qplot()
+#   with:  fitted(b3.1, summary = F, scale = "response") %>% qplot()
+
+samples %>% qplot()
+```
+
+Simulating responses.
+
+```{r}
+set.seed(1003)
+n_trials <- 9
+
+f <-
+  f %>%
+  mutate(w = rbinom(n(), size = n_trials, prob = p))
+
+# the plot
+f %>%
+  ggplot(aes(x = w)) +
+  geom_histogram(
+    binwidth = 1, center = 0,
+    color = "grey92", size = 1 / 10
+  ) +
+  scale_x_continuous("number of water samples",
+    breaks = seq(from = 0, to = 9, by = 3)
+  ) +
+  scale_y_continuous(NULL, breaks = NULL, limits = c(0, 1200)) +
+  ggtitle("Posterior predictive distribution") +
+  theme(panel.grid = element_blank())
+```
+
+
+## Video 3
+
+- Geocentric models and why linear regression is a geocentric model
+- Why normal distributions are common
+
+
+### Model of height
+
+Getting the data
+
+```{r}
+# workaround, so we do not need to load rethinking package
+d <- read_delim(
+  system.file("data", "Howell1.csv", package = "rethinking"),
+  delim = ";"
+)
+# adult only data
+d2 <- d %>% filter(age >= 18)
+```
+
+First model:
+
+$h_{i} ∼ {\sf Normal}(\mu, \sigma)$
+
+$\mu \sim {\sf Normal}(178, 20)$
+
+$\sigma \sim {\sf Uniform}(0, 50)$
+
+Prior predictive distribution
+
+```{r}
+n <- 1e4
+
+set.seed(4)
+prior_predictive_distribution <-
+  tibble(
+    sample_mu = rnorm(n, mean = 178, sd = 20),
+    sample_sigma = runif(n, min = 0, max = 50)
+  ) 
+prior_predictive_distribution %>%
+  mutate(x = rnorm(n, mean = sample_mu, sd = sample_sigma)) %>%
+  ggplot(aes(x = x)) +
+  geom_density(fill = "black", size = 0) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(
+    subtitle = expression(paste("Prior predictive distribution for ", italic(h[i]))),
+    x = NULL
+  ) +
+  theme(panel.grid = element_blank())
+```
+
+Relationship between mu and sigma
+
+```{r}
+prior_predictive_distribution %>% 
+  ggplot(aes(x = sample_mu, y = sample_sigma)) + 
+  # coord_cartesian(xlim = c(140, 160), ylim = c(4, 9)) +
+  geom_point(alpha = 0.2)
+  
+```
+
+### Grid approximation (demo)
+
+```{r}
+n <- 200
+
+d_grid <-
+  tibble(
+    mu = seq(from = 140, to = 160, length.out = n),
+    sigma = seq(from = 4, to = 9, length.out = n)
+  ) %>%
+  # make all combinations
+  expand(mu, sigma)
+
+```
+
+```{r}
+grid_function <- function(mu, sigma){
+  # NOTE: log = T
+  dnorm(d2$height, mean = mu, sd = sigma, log = T) %>% 
+    sum()
+}
+```
+
+```{r}
+d_grid <-
+  d_grid %>% 
+  mutate(log_likelihood = map2(mu, sigma, grid_function)) %>%
+  unnest() %>%
+  mutate(
+    prior_mu = dnorm(mu, mean = 178, sd = 20, log = T),
+    prior_sigma = dunif(sigma, min = 0, max = 50, log = T)
+  ) %>%
+  # NOTE: logs and additions
+  mutate(product = log_likelihood + prior_mu + prior_sigma) %>%
+  mutate(probability = exp(product - max(product)))
+
+head(d_grid)
+```
+
+Posterior probabilities for mu and sigma
+
+```{r}
+d_grid %>% 
+  ggplot(aes(x = mu, y = sigma)) + 
+  geom_raster(aes(fill = probability),
+              interpolate = T) +
+  scale_fill_viridis_c(option = "A") +
+  labs(x = expression(mu),
+       y = expression(sigma)) +
+  theme(panel.grid = element_blank())
+```
+
+Sampling from the posterior
+
+```{r}
+set.seed(4)
+d_grid_samples <- 
+  d_grid %>% 
+  sample_n(size = 1e4, replace = T, weight = probability)
+
+d_grid_samples %>% 
+  ggplot(aes(x = mu, y = sigma)) + 
+  geom_point(size = .9, alpha = 1/15) +
+  scale_fill_viridis_c() +
+  labs(x = expression(mu[samples]),
+       y = expression(sigma[samples])) +
+  theme(panel.grid = element_blank())
+```
+
+```{r}
+d_grid_samples %>% 
+  select(mu, sigma) %>% 
+  gather() %>% 
+  group_by(key) %>% 
+  mode_hdi(value)
+```
+
+### Using `brms`
+
+Slightly different prior (uniform prior is not a good idea)
+
+```{r message=FALSE, warning=FALSE, results="hide"}
+b41_half_cauchy <- 
+  brm(data = d2, family = gaussian,
+      height ~ 1,
+      prior = c(prior(normal(178, 20), class = Intercept),
+                prior(cauchy(0, 1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, 
+      file = here::here("tmp", "model_b41hc"),
+      seed = 4)
+```
+
+```{r}
+plot(b41_half_cauchy)
+
+summary(b41_half_cauchy)
+```
+
+### Sampling from the fit
+
+```{r}
+post <- posterior_samples(b41_half_cauchy)
+head(post)
+```
+
+## Book questions - chapter 3
+
+Easy problem context
+
+```{r}
+p_grid <- seq(from = 0, to = 1, length.out = 1000)
+prior <- rep(1, 1000)
+likelihood <- dbinom(6, size = 9, prob = p_grid)
+posterior <- likelihood * prior
+posterior <- posterior / sum(posterior)
+set.seed(100)
+samples <- sample(p_grid, prob = posterior, size = 1e4, replace = TRUE)
+```
+
+Use the values in samples to answer the questions that follow.
+
+### Book question 3E1
+
+How much posterior probability lies below p = 0.2?
+
+```{r}
+
+```
+
+### Book question 3E2
+
+How much posterior probability lies above p = 0.8?
+
+```{r}
+
+```
+
+### Book question 3E3
+
+How much posterior probability lies between p = 0.2 and p = 0.8? 
+
+```{r}
+
+```
+
+### Book question 3E4
+
+20% of the posterior probability lies below which value of p?
+
+```{r}
+
+```
+
+### Book question 3E5
+
+20% of the posterior probability lies above which value of p?
+
+```{r}
+
+```
+
+### Book question 3E6
+
+Which values of p contain the narrowest interval equal to 66% of the posterior probability?
+
+```{r}
+
+```
+
+### Book question 3E7
+
+Which values of p contain 66% of the posterior probability, assuming equal posterior probability both below and above the interval?
+
+```{r}
+
+
+```
+
+### Book question 3M1
+
+Suppose the globe tossing data had turned out to be 8 water in 15 tosses. Construct the posterior distribution, using grid approximation. Use the same flat prior as before.
+
+```{r}
+p_grid <- seq(from = 0, to = 1, length.out = 1000)
+
+```
+
+### Book question 3M2
+
+Draw 10,000 samples from the grid approximation from above. Then use the samples to calculate the 90% HPDI for p.
+
+```{r}
+set.seed(302)
+# samples <-
+
+```
+
+### Book question 3M3
+
+Construct a posterior predictive check for this model and data. This means simulate the distribution of samples, averaging over the posterior uncertainty in p. What is the probability of observing 8 water in 15 tosses?
+
+```{r}
+set.seed(303)
+# predictions <- 
+
+```
+
+### Book question 3M4
+
+Using the posterior distribution constructed from the new (8/15) data, now calculate the probability of observing 6 water in 9 tosses.
+
+```{r}
+set.seed(304)
+
+
+
+
+```
+
+### Book question 3M5 
+
+Start over at 3M1, but now use a prior that is zero below p=0.5 and a constant above p=0.5. This corresponds to prior information that a majority of the Earth’s surface is water. Repeat each problem above and compare the inferences. What difference does the better prior make? If it helps, compare inferences (using both priors) to the true value p = 0.7.
+
+```{r}
+# 3M1
+
+# 3M2
+
+# 3M3
+
+# 3M4
+
+```
+
+### Book question 3M6
+
+Suppose you want to estimate the Earth’s proportion of water very precisely. Specifically, you want the 99% percentile interval of the posterior distribution of p to be only 0.05 wide. This means the distance between the upper and lower bound of the interval should be 0.05. How many times will you have to toss the globe to do this?
+
+```{r}
+# calculate interval width for given n and true_p
+# next: guessing 
+
+```
+
+### Book questions: Hard
+
+The Hard problems here all use the data below. These data indicate the gender (male=1, female=0) of officially reported first and second born children in 100 two-child families.
+
+So for example, the first family in the data reported a boy (1) and then a girl (0). The second family reported a girl (0) and then a boy (1).
+
+```{r}
+birth1 <- c(1,0,0,0,1,1,0,1,0,1,0,0,1,1,0,1,1,0,0,0,1,0,0,0,1,0, 0,0,0,1,1,1,0,1,0,1,1,1,0,1,0,1,1,0,1,0,0,1,1,0,1,0,0,0,0,0,0,0, 1,1,0,1,0,0,1,0,0,0,1,0,0,1,1,1,1,0,1,0,1,1,1,1,1,0,0,1,0,1,1,0, 1,0,1,1,1,0,1,1,1,1)
+birth2 <- c(0,1,0,1,0,1,1,1,0,0,1,1,1,1,1,0,0,1,1,1,0,0,1,1,1,0, 1,1,1,0,1,1,1,0,1,0,0,1,1,1,1,0,0,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1, 1,1,1,0,1,1,0,1,1,0,1,1,1,0,0,0,0,0,0,1,0,0,0,1,1,0,0,1,0,0,1,1, 0,0,0,1,1,1,0,0,0,0)
+```
+
+### Book question 3H1
+
+Using grid approximation, compute the posterior distribution for the probability of a birth being a boy. Assume a uniform prior probability. Which parameter value maximizes the posterior probability?
+
+```{r}
+
+```
+
+### Book question 3H2
+
+Using the sample function, draw 10,000 random parameter values from the posterior distribution you calculated above. Use these samples to estimate the 50%, 89%, and 97% highest posterior density intervals.
+
+```{r}
+set.seed(302)
+
+```
+
+### Book question 3H3
+
+Use rbinom to simulate 10,000 replicates of 200 births. You should end up with 10,000 numbers, each one a count of boys out of 200 births. Compare the distribution of predicted numbers of boys to the actual count in the data (111 boys out of 200 births). There are many good ways to visualize the simulations, but the dens command (part of the rethinking package) is probably the easiest way in this case. Does it look like the model fits the data well? That is, does the distribution of predictions include the actual observation as a central, likely outcome?
+
+```{r}
+set.seed(303)
+
+```
+
+
+### Book question 3H4 
+
+Now compare 10,000 counts of boys from 100 simulated first borns only to the number of boys in the first births, birth1. How does the model look in this light?
+
+```{r}
+set.seed(304)
+
+```
+
+### Book question 3H5
+
+The model assumes that sex of first and second births are independent. To check this assumption, focus now on second births that followed female first borns. Compare 10,000 simulated counts of boys to only those second births that followed girls. To do this correctly, you need to count the number of first borns who were girls and simulate that many births, 10,000 times. Compare the counts of boys in your simulations to the actual observed count of boys following girls. How does the model look in this light? Any guesses what is going on in these data?
+
+```{r}
+set.seed(305)
+
+```
+
